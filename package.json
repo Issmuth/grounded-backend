@@ -1,0 +1,40 @@
+{
+  "name": "grounded-backend",
+  "version": "1.0.0",
+  "description": "Express.js backend server with Supabase PostgreSQL and Firebase Authentication for Grounded mobile app",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "set NODE_OPTIONS=--dns-result-order=ipv4first && ts-node-dev --respawn --transpile-only src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "migrate:up": "node-pg-migrate up",
+    "migrate:down": "node-pg-migrate down"
+  },
+  "keywords": [
+    "express",
+    "postgresql",
+    "firebase",
+    "typescript",
+    "backend"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "firebase-admin": "^12.7.0",
+    "helmet": "^8.0.0",
+    "morgan": "^1.10.0",
+    "postgres": "^3.4.7"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/morgan": "^1.9.9",
+    "@types/node": "^22.10.1",
+    "node-pg-migrate": "^7.7.1",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.7.2"
+  }
+}
