@@ -1,7 +1,7 @@
 import postgres from "postgres";
 import { env } from "./env";
 
-// Create Supabase connection using postgres driver
+// Create database connection using postgres driver
 const connectionString = env.DATABASE_URL;
 
 export const sql = postgres(connectionString);
@@ -37,7 +37,7 @@ export async function query(text: string, params?: any[]): Promise<any> {
 export async function testConnection(): Promise<void> {
   try {
     const result = await sql`SELECT NOW() as now`;
-    console.log("✓ Supabase database connection established successfully");
+    console.log("✓ Database connection established successfully");
     console.log("  Server time:", result[0].now);
   } catch (error) {
     console.error("✗ Database connection failed:", error);

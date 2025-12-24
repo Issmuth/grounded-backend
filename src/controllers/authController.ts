@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import { UserModel } from "../models/User";
 import { logger } from "../utils/logger";
 
 // Google authentication endpoint
@@ -16,15 +17,21 @@ export async function googleAuth(
 
     const { uid, email, name } = req.user;
 
+    // Sync user with database
+    const user = await UserModel.upsert({
+      firebase_uid: uid,
+      email,
+      display_name: name || email,
+    });
+
     logger.info("Google authentication successful", { uid, email });
 
     res.status(200).json({
       success: true,
       message: "Authentication successful",
       user: {
-        uid,
-        email,
-        name,
+        ...user,
+        uid, // Keep uid for backward compatibility if needed, though user.firebase_uid exists
       },
     });
   } catch (error) {

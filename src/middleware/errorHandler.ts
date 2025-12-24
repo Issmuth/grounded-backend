@@ -18,7 +18,7 @@ export function errorHandler(
   err: Error | AppError,
   req: Request,
   res: Response,
-  next: NextFunction
+  _next: NextFunction
 ): void {
   // Default error values
   let statusCode = 500;
@@ -67,7 +67,7 @@ export function errorHandler(
 export function notFoundHandler(
   req: Request,
   res: Response,
-  next: NextFunction
+  _next: NextFunction
 ): void {
   const errorResponse: ErrorResponse = {
     error: {

@@ -1,6 +1,6 @@
 # Grounded Backend
 
-Express.js backend server with Supabase PostgreSQL and Firebase Authentication for the Grounded mobile application.
+Express.js backend server with PostgreSQL and Firebase Authentication for the Grounded mobile application.
 
 > **👋 New here?** Start with **[GET_STARTED.md](./GET_STARTED.md)** to choose your learning path!
 
@@ -8,23 +8,24 @@ Express.js backend server with Supabase PostgreSQL and Firebase Authentication f
 
 - **Express.js** - Fast, unopinionated web framework
 - **TypeScript** - Type-safe development
-- **Supabase PostgreSQL** - Managed PostgreSQL database with built-in features
+- **PostgreSQL** - Relational database
 - **Firebase Authentication** - Secure user authentication with token verification
 - **User Upsert Pattern** - Seamless user registration and login with PostgreSQL `ON CONFLICT`
-- **Database Migrations** - Systematic schema management
-- **Error Handling** - Consistent error responses
-- **Request Logging** - HTTP request tracking
+- **Protected Routes** - Middleware-based authentication for API endpoints
+- **Database Migrations** - Systematic schema management with node-pg-migrate
+- **Error Handling** - Consistent error responses with custom error classes
+- **Request Logging** - HTTP request tracking with Morgan
 - **Security** - Helmet and CORS protection
 
 ## Prerequisites
 
 - Node.js (LTS version recommended)
-- Supabase account and project
+- PostgreSQL database
 - Firebase project with Admin SDK credentials
 
 ## Quick Start
 
-**New to this project?** See [QUICKSTART.md](./QUICKSTART.md) for a 10-minute setup guide.
+**New to this project?** See [QUICKSTART.md](../helper_docs/backend/QUICKSTART.md) for a 10-minute setup guide.
 
 ## Installation
 
@@ -70,7 +71,7 @@ ALLOWED_ORIGINS=http://localhost:8081,exp://192.168.1.100:8081
 
 ## Supabase Setup
 
-**📚 Detailed guide**: See [SUPABASE_SETUP.md](./SUPABASE_SETUP.md) for complete Supabase configuration.
+**📚 Detailed guide**: See [SUPABASE_SETUP.md](../helper_docs/backend/SUPABASE_SETUP.md) for complete Supabase configuration.
 
 **Quick setup**:
 
@@ -153,15 +154,15 @@ Response:
 
 **POST** `/api/auth/google`
 
-Verify Google authentication token (optional endpoint).
+Verify Google authentication token and return user information.
 
-Headers:
+**Headers**:
 
 ```
 Authorization: Bearer <firebase-id-token>
 ```
 
-Response:
+**Response**:
 
 ```json
 {
@@ -175,23 +176,29 @@ Response:
 }
 ```
 
+**Note**: This endpoint is optional. The primary authentication flow uses the `/api/users` endpoint for user creation/updates.
+
 ### User Management
 
 **POST** `/api/users`
 
-Create or update user profile (upsert operation). This endpoint automatically:
+Create or update user profile using PostgreSQL upsert pattern. This is the primary endpoint for user authentication flow.
 
-- Creates a new user if they don't exist
-- Updates existing user data if they do exist
+**Features**:
+
+- Creates new users automatically on first sign-in
+- Updates existing user data on subsequent sign-ins
 - Uses PostgreSQL's `ON CONFLICT` clause for atomic operations
+- No "user already exists" errors
+- Single database query for efficiency
 
-Headers:
+**Headers**:
 
 ```
 Authorization: Bearer <firebase-id-token>
 ```
 
-Request Body:
+**Request Body**:
 
 ```json
 {
@@ -201,7 +208,7 @@ Request Body:
 }
 ```
 
-Response:
+**Response**:
 
 ```json
 {
@@ -214,17 +221,30 @@ Response:
 }
 ```
 
+**Database Operation**:
+
+```sql
+INSERT INTO users (firebase_uid, email, display_name)
+VALUES ($1, $2, $3)
+ON CONFLICT (firebase_uid)
+DO UPDATE SET
+  email = EXCLUDED.email,
+  display_name = EXCLUDED.display_name,
+  updated_at = CURRENT_TIMESTAMP
+RETURNING *
+```
+
 **GET** `/api/users/me`
 
-Get current user profile (requires Firebase authentication).
+Get current authenticated user's profile.
 
-Headers:
+**Headers**:
 
 ```
 Authorization: Bearer <firebase-id-token>
 ```
 
-Response:
+**Response**:
 
 ```json
 {
@@ -236,6 +256,11 @@ Response:
   "updated_at": "2025-11-26T10:00:00.000Z"
 }
 ```
+
+**Error Responses**:
+
+- `401 Unauthorized`: Invalid or missing token
+- `404 Not Found`: User not found in database
 
 ## Environment Variables
 
@@ -256,14 +281,36 @@ Response:
 
 ## Authentication Architecture
 
+### Overview
+
+The backend implements Firebase Authentication with token verification and PostgreSQL user management.
+
+**Key Components**:
+
+- `middleware/auth.ts` - Firebase token verification middleware
+- `controllers/authController.ts` - Authentication endpoint handlers
+- `controllers/userController.ts` - User management endpoints
+- `models/User.ts` - Database operations with upsert pattern
+
 ### Firebase Token Verification
 
 All protected endpoints use Firebase Admin SDK to verify ID tokens:
 
 1. Client sends request with `Authorization: Bearer <token>` header
-2. Auth middleware extracts and verifies token with Firebase
-3. User information is attached to request object
+2. `verifyFirebaseToken` middleware extracts and verifies token
+3. Decoded user information is attached to `req.user`
 4. Controller processes authenticated request
+
+**Implementation**:
+
+```typescript
+import { verifyFirebaseToken } from "./middleware/auth";
+
+router.get("/protected", verifyFirebaseToken, (req, res) => {
+  // req.user contains: { uid, email, name }
+  res.json({ user: req.user });
+});
+```
 
 ### User Upsert Pattern
 
@@ -280,7 +327,7 @@ DO UPDATE SET
 RETURNING *
 ```
 
-**Benefits:**
+**Benefits**:
 
 - Single endpoint handles both registration and login
 - No "user already exists" errors
@@ -288,43 +335,66 @@ RETURNING *
 - Automatic data updates on each login
 - Efficient (one query instead of two)
 
-### Protected Routes
+### Authentication Flow
 
-Add authentication to any route:
+1. Mobile app authenticates user with Firebase
+2. App receives Firebase ID token
+3. App calls `POST /api/users` with token and user data
+4. Backend verifies token with Firebase Admin SDK
+5. Backend creates or updates user in PostgreSQL
+6. Backend returns user data to app
 
-```typescript
-import { verifyFirebaseToken } from "./middleware/auth";
+### Error Handling
 
-router.get("/protected", verifyFirebaseToken, (req, res) => {
-  // req.user contains authenticated user info
-  res.json({ user: req.user });
-});
-```
+The authentication middleware handles common errors:
+
+- `401 Unauthorized`: Missing or invalid token
+- `403 Forbidden`: Token expired or revoked
+- `404 Not Found`: User not found in database
+- `500 Internal Server Error`: Firebase or database errors
 
 ## Project Structure
 
 ```
 grounded-backend/
 ├── src/
-│   ├── config/          # Configuration files
-│   ├── controllers/     # Request handlers
-│   ├── middleware/      # Express middleware
-│   ├── models/          # Database models
-│   ├── routes/          # API routes
-│   ├── types/           # TypeScript types
-│   ├── utils/           # Utility functions
-│   └── server.ts        # Application entry point
-├── migrations/          # Database migrations
-├── dist/                # Compiled JavaScript (gitignored)
-├── .env                 # Environment variables (gitignored)
-├── .env.example         # Environment template
+│   ├── config/              # Configuration files
+│   │   ├── database.ts      # PostgreSQL connection
+│   │   ├── firebase.ts      # Firebase Admin SDK setup
+│   │   └── env.ts           # Environment validation
+│   ├── controllers/         # Request handlers
+│   │   ├── authController.ts    # Authentication endpoints
+│   │   └── userController.ts    # User management endpoints
+│   ├── middleware/          # Express middleware
+│   │   ├── auth.ts          # Firebase token verification
+│   │   ├── errorHandler.ts  # Global error handling
+│   │   └── logger.ts        # Request logging
+│   ├── models/              # Database models
+│   │   └── User.ts          # User model with upsert
+│   ├── routes/              # API routes
+│   │   ├── auth.ts          # Authentication routes
+│   │   ├── users.ts         # User routes
+│   │   ├── health.ts        # Health check
+│   │   └── index.ts         # Route aggregation
+│   ├── types/               # TypeScript types
+│   │   ├── express.d.ts     # Express type extensions
+│   │   └── index.ts         # Shared types
+│   ├── utils/               # Utility functions
+│   │   ├── errors.ts        # Custom error classes
+│   │   └── logger.ts        # Winston logger
+│   └── server.ts            # Application entry point
+├── migrations/              # Database migrations
+│   └── 1732638000000_create_users_table.sql
+├── dist/                    # Compiled JavaScript (gitignored)
+├── .env                     # Environment variables (gitignored)
+├── .env.example             # Environment template
 ├── package.json
 └── tsconfig.json
 ```
 
 ## Deployment
 
-See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed deployment instructions (supports various platforms including Vercel, Railway, Render, and traditional hosting).
+See [DEPLOYMENT.md](../helper_docs/backend/DEPLOYMENT.md) for detailed deployment instructions (supports various platforms including Vercel, Railway, Render, and traditional hosting).
 
 ## Security
 
@@ -338,21 +408,27 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed deployment instructions (suppo
 
 ## Documentation
 
+All detailed guides are located in `../helper_docs/backend/`:
+
 ### Getting Started
 
-- **[GET_STARTED.md](./GET_STARTED.md)** - Choose your learning path (start here!)
-- **[QUICKSTART.md](./QUICKSTART.md)** - Get running in 10 minutes
+- **[GET_STARTED.md](../helper_docs/backend/GET_STARTED.md)** - Choose your learning path (start here!)
+- **[QUICKSTART.md](../helper_docs/backend/QUICKSTART.md)** - Get running in 10 minutes
 - **[README.md](./README.md)** - This file (complete documentation)
 
 ### Database & Infrastructure
 
-- **[SUPABASE_SETUP.md](./SUPABASE_SETUP.md)** - Complete Supabase configuration guide
-- **[WHY_SUPABASE.md](./WHY_SUPABASE.md)** - Why we chose Supabase (comparison & benefits)
+- **[SUPABASE_SETUP.md](../helper_docs/backend/SUPABASE_SETUP.md)** - Complete Supabase configuration guide
+- **[WHY_SUPABASE.md](../helper_docs/backend/WHY_SUPABASE.md)** - Why we chose Supabase (comparison & benefits)
 
 ### Deployment
 
-- **[DEPLOYMENT.md](./DEPLOYMENT.md)** - Deploy to Vercel, Railway, Render, or traditional hosting
-- **[DEPLOYMENT_CHECKLIST.md](./DEPLOYMENT_CHECKLIST.md)** - Pre-deployment checklist
+- **[DEPLOYMENT.md](../helper_docs/backend/DEPLOYMENT.md)** - Deploy to Vercel, Railway, Render, or traditional hosting
+- **[DEPLOYMENT_CHECKLIST.md](../helper_docs/backend/DEPLOYMENT_CHECKLIST.md)** - Pre-deployment checklist
+
+### Troubleshooting
+
+- **[TROUBLESHOOTING.md](../helper_docs/backend/TROUBLESHOOTING.md)** - Common issues and solutions
 
 ## License
 

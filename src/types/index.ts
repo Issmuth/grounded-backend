@@ -1,6 +1,6 @@
 // User interface
 export interface User {
-  id: number;
+  id: string;
   firebase_uid: string;
   email: string;
   display_name: string;
@@ -20,3 +20,7 @@ export interface UpdateUserDto {
   email?: string;
   display_name?: string;
 }
+
+// Export task types
+export * from "./task";
+export * from "./embedding";

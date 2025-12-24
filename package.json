@@ -1,7 +1,7 @@
 {
   "name": "grounded-backend",
   "version": "1.0.0",
-  "description": "Express.js backend server with Supabase PostgreSQL and Firebase Authentication for Grounded mobile app",
+  "description": "Express.js backend server with PostgreSQL and Firebase Authentication for Grounded mobile app",
   "main": "dist/server.js",
   "scripts": {
     "dev": "set NODE_OPTIONS=--dns-result-order=ipv4first && ts-node-dev --respawn --transpile-only src/server.ts",
@@ -20,6 +20,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.1",

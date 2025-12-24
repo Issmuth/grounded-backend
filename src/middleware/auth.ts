@@ -6,7 +6,7 @@ import { logger } from "../utils/logger";
 // Authentication middleware to verify Firebase ID tokens
 export async function authMiddleware(
   req: Request,
-  res: Response,
+  _res: Response,
   next: NextFunction
 ): Promise<void> {
   try {

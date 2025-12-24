@@ -16,6 +16,7 @@ interface EnvironmentConfig {
   FIREBASE_CLIENT_EMAIL: string;
   FIREBASE_PRIVATE_KEY: string;
   ALLOWED_ORIGINS: string[];
+  GEMINI_API_KEY: string;
 }
 
 const requiredEnvVars = [
@@ -26,6 +27,7 @@ const requiredEnvVars = [
   "FIREBASE_CLIENT_EMAIL",
   "FIREBASE_PRIVATE_KEY",
   "ALLOWED_ORIGINS",
+  "GEMINI_API_KEY",
 ];
 
 export function validateEnvironment(): void {
@@ -58,4 +60,5 @@ export const env: EnvironmentConfig = {
   FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL || "",
   FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY || "",
   ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS?.split(",") || [],
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY || "",
 };

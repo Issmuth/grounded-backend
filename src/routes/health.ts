@@ -7,7 +7,7 @@ const router = Router();
 const startTime = Date.now();
 
 // Health check endpoint
-router.get("/", async (req: Request, res: Response) => {
+router.get("/", async (_req: Request, res: Response) => {
   let databaseStatus = "connected";
   let statusCode = 200;
 
