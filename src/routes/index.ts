@@ -4,6 +4,7 @@ import authRoutes from "./auth";
 import userRoutes from "./users";
 import taskRoutes from "./tasks";
 import aiRoutes from "./ai";
+import chatRoutes from "./chatRoutes";
 
 const router = Router();
 
@@ -17,5 +18,6 @@ router.use("/api/auth", authRoutes);
 router.use("/api/users", userRoutes);
 router.use("/api/tasks", taskRoutes);
 router.use("/api/ai", aiRoutes);
+router.use("/api/chat", chatRoutes);
 
 export default router;

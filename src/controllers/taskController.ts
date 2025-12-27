@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { TaskModel } from "../models/Task";
-import { AppError } from "../utils/errors";
+import { AppError, NotFoundError, ForbiddenError } from "../utils/errors";
+import { UserModel } from "../models/User";
 
 export const createTask = async (req: Request, res: Response) => {
   try {
@@ -57,12 +58,12 @@ export const getTaskById = async (req: Request, res: Response) => {
     const task = await TaskModel.findById(id);
 
     if (!task) {
-      throw new AppError("Task not found", 404);
+      throw new NotFoundError("Task not found");
     }
 
     // Check ownership
     if (task.user_id !== req.user!.uid) {
-      throw new AppError("Unauthorized", 403);
+      throw new ForbiddenError("Unauthorized");
     }
 
     res.status(200).json({
@@ -93,14 +94,46 @@ export const updateTask = async (req: Request, res: Response) => {
 
     const existingTask = await TaskModel.findById(id);
     if (!existingTask) {
-      throw new AppError("Task not found", 404);
+      throw new NotFoundError("Task not found");
     }
 
     if (existingTask.user_id !== userId) {
-      throw new AppError("Unauthorized", 403);
+      throw new ForbiddenError("Unauthorized");
     }
 
     const updatedTask = await TaskModel.update(id, updates);
+
+    // Debug log
+    console.log(
+      `[task] existing task id=${id}, was_completed=${existingTask.is_completed}`
+    );
+    console.log(
+      `[task] updated task id=${id}, is_completed=${
+        (updatedTask as any)?.is_completed
+      }, date=${(updatedTask as any)?.date}`
+    );
+
+    // Adjust streaks for this user/date if the task transitioned from incomplete -> complete
+    try {
+      const wasCompleted = !!existingTask.is_completed;
+      const nowCompleted =
+        updates && "is_completed" in updates
+          ? !!updates.is_completed
+          : !!(updatedTask as any)?.is_completed;
+
+      if (!wasCompleted && nowCompleted && updatedTask && updatedTask.date) {
+        console.log(
+          `[task] Task transitioned to completed; calling adjustStreakAfterDate for uid=${userId}, date=${updatedTask.date}`
+        );
+        await UserModel.adjustStreakAfterDate(userId, updatedTask.date);
+      } else {
+        console.log(
+          `[task] No streak adjustment needed (wasCompleted=${wasCompleted}, nowCompleted=${nowCompleted})`
+        );
+      }
+    } catch (e) {
+      console.error("Failed to adjust streak after task update:", e);
+    }
 
     res.status(200).json({
       status: "success",
@@ -122,6 +155,57 @@ export const updateTask = async (req: Request, res: Response) => {
   }
 };
 
+export const updateSubtask = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    // Ideally we should check ownership via task_id, but for speed we might skip or do a join.
+    // Let's assume if they have the ID they can update, or we should fetch the subtask -> task -> check user.
+    // For now, let's implement basic update.
+
+    const updatedSubtask = await TaskModel.updateSubtask(id, req.body);
+    if (!updatedSubtask) throw new NotFoundError("Subtask not found");
+
+    // Try to update parent task completion and adjust streaks accordingly
+    try {
+      const parentTask = await TaskModel.findById(updatedSubtask.task_id);
+      if (parentTask) {
+        const allSubtasksCompleted = (parentTask.subtasks || []).every(
+          (s) => s.is_completed
+        );
+        if (allSubtasksCompleted && !parentTask.is_completed) {
+          console.log(
+            `[task] all subtasks complete for task=${parentTask.id}, marking task complete and adjusting streak`
+          );
+          await TaskModel.update(parentTask.id, { is_completed: true });
+          await UserModel.adjustStreakAfterDate(req.user!.uid, parentTask.date);
+        } else if (!allSubtasksCompleted && parentTask.is_completed) {
+          console.log(
+            `[task] subtasks incomplete for task=${parentTask.id}, marking task incomplete and adjusting streak`
+          );
+          await TaskModel.update(parentTask.id, { is_completed: false });
+          await UserModel.adjustStreakAfterDate(req.user!.uid, parentTask.date);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to reconcile parent task completion / streaks:", e);
+    }
+
+    res.status(200).json({
+      status: "success",
+      data: updatedSubtask,
+    });
+  } catch (error) {
+    if (error instanceof AppError) {
+      res
+        .status(error.statusCode)
+        .json({ status: "error", message: error.message });
+    } else {
+      res
+        .status(500)
+        .json({ status: "error", message: "Failed to update subtask" });
+    }
+  }
+};
 export const deleteTask = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -129,11 +213,11 @@ export const deleteTask = async (req: Request, res: Response) => {
 
     const existingTask = await TaskModel.findById(id);
     if (!existingTask) {
-      throw new AppError("Task not found", 404);
+      throw new NotFoundError("Task not found");
     }
 
     if (existingTask.user_id !== userId) {
-      throw new AppError("Unauthorized", 403);
+      throw new ForbiddenError("Unauthorized");
     }
 
     await TaskModel.delete(id);
@@ -186,8 +270,8 @@ export const createSubtask = async (req: Request, res: Response) => {
     const subtaskData = req.body;
 
     const task = await TaskModel.findById(taskId);
-    if (!task) throw new AppError("Task not found", 404);
-    if (task.user_id !== userId) throw new AppError("Unauthorized", 403);
+    if (!task) throw new NotFoundError("Task not found");
+    if (task.user_id !== userId) throw new ForbiddenError("Unauthorized");
 
     const subtask = await TaskModel.createSubtask(taskId, subtaskData);
 
@@ -204,33 +288,6 @@ export const createSubtask = async (req: Request, res: Response) => {
       res
         .status(500)
         .json({ status: "error", message: "Failed to create subtask" });
-    }
-  }
-};
-
-export const updateSubtask = async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    // Ideally we should check ownership via task_id, but for speed we might skip or do a join.
-    // Let's assume if they have the ID they can update, or we should fetch the subtask -> task -> check user.
-    // For now, let's implement basic update.
-
-    const updatedSubtask = await TaskModel.updateSubtask(id, req.body);
-    if (!updatedSubtask) throw new AppError("Subtask not found", 404);
-
-    res.status(200).json({
-      status: "success",
-      data: updatedSubtask,
-    });
-  } catch (error) {
-    if (error instanceof AppError) {
-      res
-        .status(error.statusCode)
-        .json({ status: "error", message: error.message });
-    } else {
-      res
-        .status(500)
-        .json({ status: "error", message: "Failed to update subtask" });
     }
   }
 };
