@@ -77,6 +77,12 @@ export const toolSchemas: Groq.Chat.Completions.ChatCompletionTool[] = [
             enum: ["low", "medium", "high"],
             description: "Task priority level",
           },
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Task tags. Use ['grounded'] for focus sessions requiring concentration, or ['regular'] for normal tasks.",
+          },
         },
         required: ["action"],
       },
@@ -104,6 +110,7 @@ interface ProposeActionArgs {
   end_time?: string;
   description?: string;
   priority?: string;
+  tags?: string[];
 }
 
 export async function executeGetTasks(
@@ -151,15 +158,25 @@ export async function executeGetTasks(
     // Limit to 10 most relevant tasks
     const limitedTasks = tasks.slice(0, 10);
 
-    // Return simplified list
-    const simplifiedTasks = limitedTasks.map((t: any) => ({
-      id: t.id,
-      title: t.title,
-      date: t.date,
-      startTime: t.start_time,
-      description: t.description,
-      isCompleted: t.is_completed,
-    }));
+    // Return simplified list with tags for task type awareness
+    const simplifiedTasks = limitedTasks.map((t: any) => {
+      // Extract task type from tags array (tags are objects with type/label)
+      const tagsArray = t.tags || [];
+      const isGrounded = tagsArray.some(
+        (tag: any) => tag?.type === "grounded" || tag === "grounded"
+      );
+      return {
+        id: t.id,
+        title: t.title,
+        date: t.date,
+        startTime: t.start_time,
+        endTime: t.end_time,
+        description: t.description,
+        isCompleted: t.is_completed,
+        tags: tagsArray,
+        taskType: isGrounded ? "grounded" : "regular",
+      };
+    });
 
     console.log(`get_tasks returning ${simplifiedTasks.length} tasks`);
 
@@ -184,10 +201,17 @@ export async function executeGetTasks(
   }
 }
 
+// Convert simple tag strings to proper tag objects
+function formatTags(tags?: string[]): Array<{ type: string; label: string }> {
+  const tagType = tags?.includes("grounded") ? "grounded" : "regular";
+  const label = tagType === "grounded" ? "Grounded" : "Regular";
+  return [{ type: tagType, label }];
+}
+
 export function executeProposeAction(args: ProposeActionArgs): string {
   console.log("✅ propose_action called with:", args);
   // Convert flat args to the data structure expected by confirmAction
-  const { action, task_id, ...rest } = args;
+  const { action, task_id, tags, ...rest } = args;
   return JSON.stringify({
     action,
     data: {
@@ -196,6 +220,7 @@ export function executeProposeAction(args: ProposeActionArgs): string {
       // Convert snake_case to camelCase for frontend
       startTime: rest.start_time,
       endTime: rest.end_time,
+      tags: formatTags(tags),
     },
     _isProposal: true,
   });

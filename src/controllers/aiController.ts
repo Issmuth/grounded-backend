@@ -118,6 +118,27 @@ Every task MUST have:
 - **date**: In YYYY-MM-DD format
 - **start_time**: In HH:MM format (24-hour)
 - **description**: A helpful description (generate one based on context if user doesn't provide)
+- **tags**: Task type classification (see below)
+
+## TASK TYPES (Important!)
+Tasks are classified by their tags:
+
+### Regular Tasks (tags: ["regular"])
+- Normal tasks that can be completed anytime
+- Default type if user doesn't specify
+- Examples: "buy groceries", "call mom", "send email"
+
+### Grounded Tasks (tags: ["grounded"])
+- Focus sessions requiring deep concentration
+- User cannot interact with their device during the task duration
+- Task can ONLY be completed by doing an in-app focus session
+- Use for: studying, deep work, meditation, focused reading, creative work
+- Examples: "study for exam", "write report", "practice piano", "meditate"
+
+**How to classify:**
+- If user mentions: focus, concentrate, study, deep work, meditation, practice, no distractions → use ["grounded"]
+- If it's a quick task, errand, or doesn't need focus time → use ["regular"]
+- When unsure, ask the user: "Would you like this as a focus session (grounded) or a regular task?"
 
 ## Date/Time Formatting
 - Dates: YYYY-MM-DD (e.g., ${localDate})
@@ -139,14 +160,20 @@ User: "Schedule a call at 2pm tomorrow"
 **Example 3: Create with full info - proceed**
 User: "Add gym at 6am tomorrow for leg day workout"
 → get_tasks({ date: "${tomorrowDate}" }) to verify no conflict
-→ propose_action({ action: "create_task", title: "Gym - Leg Day", date: "${tomorrowDate}", start_time: "06:00", description: "Leg day workout session at the gym" })
+→ propose_action({ action: "create_task", title: "Gym - Leg Day", date: "${tomorrowDate}", start_time: "06:00", description: "Leg day workout session at the gym", tags: ["regular"] })
+
+**Example 4: Grounded task (focus session)**
+User: "I need to study for my exam tomorrow morning"
+→ get_tasks({ date: "${tomorrowDate}" }) to check schedule
+→ propose_action({ action: "create_task", title: "Study for Exam", date: "${tomorrowDate}", start_time: "09:00", end_time: "11:00", description: "Focused study session for upcoming exam", tags: ["grounded"] })
 
 ## 🚫 What NOT To Do
 - ❌ Creating tasks without checking for conflicts first
 - ❌ Creating tasks without a description
 - ❌ Proposing tasks when missing time (ask the user!)
 - ❌ Ignoring scheduling conflicts
-- ❌ Inventing task IDs instead of using actual IDs from search results`;
+- ❌ Inventing task IDs instead of using actual IDs from search results
+- ❌ Forgetting to include tags (always specify ["regular"] or ["grounded"])`;
 }
 
 // Type definitions for Groq SDK responses
@@ -276,18 +303,41 @@ export const chat = async (req: Request, res: Response) => {
         console.log("Proposal:", proposal);
 
         // Generate a simple confirmation message based on the action
-        const { action, task_id, start_time, end_time, title, date, ...rest } =
-          proposal;
+        const {
+          action,
+          task_id,
+          start_time,
+          end_time,
+          title,
+          date,
+          tags,
+          ...rest
+        } = proposal;
+
+        // Determine task type from tags (agent sends simple strings like "grounded")
+        const isGrounded = (tags || []).includes("grounded");
+        // Format tags as proper objects for frontend
+        const formattedTags = [
+          {
+            type: isGrounded ? "grounded" : "regular",
+            label: isGrounded ? "Grounded" : "Regular",
+          },
+        ];
+        const taskTypeLabel = isGrounded ? " as a focus session" : "";
 
         let confirmationText = "I've prepared that for you. Please confirm.";
         if (action === "create_task") {
-          confirmationText = `I'll create a task "${title || "New task"}"${
-            date ? ` for ${date}` : ""
-          }${start_time ? ` at ${start_time}` : ""}. Please confirm.`;
+          confirmationText = `I'll create ${
+            isGrounded ? "a focus session" : "a task"
+          } "${title || "New task"}"${date ? ` for ${date}` : ""}${
+            start_time ? ` at ${start_time}` : ""
+          }${
+            isGrounded ? " (grounded - no device distractions)" : ""
+          }. Please confirm.`;
         } else if (action === "update_task") {
           confirmationText = `I'll update the task${
             start_time ? ` to ${start_time}` : ""
-          }${date ? ` on ${date}` : ""}. Please confirm.`;
+          }${date ? ` on ${date}` : ""}${taskTypeLabel}. Please confirm.`;
         } else if (action === "delete_task") {
           confirmationText = "I'll delete this task. Please confirm.";
         }
@@ -301,6 +351,7 @@ export const chat = async (req: Request, res: Response) => {
             date,
             startTime: start_time,
             endTime: end_time,
+            tags: formattedTags,
             ...rest,
           },
           text: confirmationText,
