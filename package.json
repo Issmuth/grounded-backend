@@ -20,14 +20,18 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@ai-sdk/groq": "^3.0.1",
     "@google/generative-ai": "^0.24.1",
+    "ai": "^6.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.1",
     "firebase-admin": "^12.7.0",
+    "groq-sdk": "^0.37.0",
     "helmet": "^8.0.0",
     "morgan": "^1.10.0",
-    "postgres": "^3.4.7"
+    "postgres": "^3.4.7",
+    "zod": "^4.2.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

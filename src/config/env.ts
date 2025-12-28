@@ -17,6 +17,8 @@ interface EnvironmentConfig {
   FIREBASE_PRIVATE_KEY: string;
   ALLOWED_ORIGINS: string[];
   GEMINI_API_KEY: string;
+  GROQ_API_KEY?: string;
+  GROQ_MODEL?: string;
 }
 
 const requiredEnvVars = [
@@ -28,6 +30,7 @@ const requiredEnvVars = [
   "FIREBASE_PRIVATE_KEY",
   "ALLOWED_ORIGINS",
   "GEMINI_API_KEY",
+  "GROQ_API_KEY",
 ];
 
 export function validateEnvironment(): void {
@@ -61,4 +64,6 @@ export const env: EnvironmentConfig = {
   FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY || "",
   ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS?.split(",") || [],
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || "",
+  GROQ_API_KEY: process.env.GROQ_API_KEY || "",
+  GROQ_MODEL: process.env.GROQ_MODEL || "",
 };

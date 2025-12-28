@@ -57,12 +57,12 @@ export const getSession = async (
     const session = await ChatSessionModel.findByIdWithMessages(id);
 
     if (!session) {
-      throw new AppError("Session not found", 404);
+      throw new AppError("Session not found", 404, "SESSION_NOT_FOUND");
     }
 
     // Verify session belongs to user
     if (session.user_id !== userId) {
-      throw new AppError("Unauthorized", 403);
+      throw new AppError("Unauthorized", 403, "UNAUTHORIZED");
     }
 
     res.json({
@@ -112,11 +112,11 @@ export const updateSession = async (
     // Verify session belongs to user
     const existingSession = await ChatSessionModel.findById(id);
     if (!existingSession) {
-      throw new AppError("Session not found", 404);
+      throw new AppError("Session not found", 404, "SESSION_NOT_FOUND");
     }
 
     if (existingSession.user_id !== userId) {
-      throw new AppError("Unauthorized", 403);
+      throw new AppError("Unauthorized", 403, "UNAUTHORIZED");
     }
 
     const session = await ChatSessionModel.update(id, updates);
@@ -143,11 +143,11 @@ export const deleteSession = async (
     // Verify session belongs to user
     const existingSession = await ChatSessionModel.findById(id);
     if (!existingSession) {
-      throw new AppError("Session not found", 404);
+      throw new AppError("Session not found", 404, "SESSION_NOT_FOUND");
     }
 
     if (existingSession.user_id !== userId) {
-      throw new AppError("Unauthorized", 403);
+      throw new AppError("Unauthorized", 403, "UNAUTHORIZED");
     }
 
     await ChatSessionModel.delete(id);
@@ -196,20 +196,24 @@ export const sendMessage = async (
 ): Promise<void> => {
   try {
     const userId = req.user!.uid;
-    const { sessionId, message, history } = req.body;
+    const { sessionId, message } = req.body;
 
     if (!sessionId || !message) {
-      throw new AppError("Session ID and message are required", 400);
+      throw new AppError(
+        "Session ID and message are required",
+        400,
+        "INVALID_REQUEST"
+      );
     }
 
     // Verify session belongs to user
     const session = await ChatSessionModel.findById(sessionId);
     if (!session) {
-      throw new AppError("Session not found", 404);
+      throw new AppError("Session not found", 404, "SESSION_NOT_FOUND");
     }
 
     if (session.user_id !== userId) {
-      throw new AppError("Unauthorized", 403);
+      throw new AppError("Unauthorized", 403, "UNAUTHORIZED");
     }
 
     // Add user message
@@ -227,6 +231,37 @@ export const sendMessage = async (
       user_id: userId,
       query: message,
     });
+
+    // Attach session message history to the request so AI has context
+    try {
+      const sessionWithMessages = await ChatSessionModel.findByIdWithMessages(
+        sessionId
+      );
+      req.body = {
+        ...(req.body || {}),
+        history: (sessionWithMessages?.messages || []).map((m: any) => {
+          let text = m.text;
+          if (m.tasks) {
+            try {
+              const tasks = typeof m.tasks === 'string' ? JSON.parse(m.tasks) : m.tasks;
+              if (Array.isArray(tasks) && tasks.length > 0) {
+                 const taskContext = tasks.map((t: any) => JSON.stringify({id: t.id, title: t.title, date: t.date || t.start_time})).join('; ');
+                 text += `\n[System Note: The user saw these tasks: ${taskContext}]`;
+              }
+            } catch (e) {
+              // ignore
+            }
+          }
+          return {
+            isUser: m.is_user ?? m.isUser ?? false,
+            text: text,
+          };
+        }),
+      };
+    } catch (e) {
+      // non-fatal - AI will still run without history
+      console.warn("Failed to append session history to request:", e);
+    }
 
     // Get AI response using existing AI controller logic
     try {
@@ -249,16 +284,45 @@ export const sendMessage = async (
       // Create AI message based on response type
       let aiMessageData: any = {
         session_id: sessionId,
-        text: aiResponseData.text || "I'm processing your request.",
+        text: undefined,
         is_user: false,
       };
 
-      // Handle confirmation requests
+      // Prefer explicit AI text when provided, but be defensive when it's missing
+      const aiText = aiResponseData?.text?.toString().trim();
+      if (aiText) {
+        aiMessageData.text = aiText;
+      } else if (aiResponseData?.type === "confirmation_request") {
+        aiMessageData.text = "I've prepared that for you. Does this look right?";
+      } else if (Array.isArray(aiResponseData?.tasks) && aiResponseData.tasks.length > 0) {
+        // Build a concise list of found tasks for the user to see
+        const list = (aiResponseData.tasks || [])
+          .slice(0, 5)
+          .map((t: any, i: number) => {
+            const title = t.title || t.name || "Untitled";
+            const date = t.date || t.start_time || null;
+            return `${i + 1}. ${title}${date ? ` — ${date}` : ""}`;
+          })
+          .join("\n");
+
+        aiMessageData.text = `I found ${aiResponseData.tasks.length} task(s) related to your request:\n${list}\n\nReply with the number to pick one, or say 'none' to cancel.`;
+
+        // Also attach the full tasks so the frontend can render cards
+        aiMessageData.tasks = JSON.stringify(aiResponseData.tasks);
+      } else {
+        // Avoid generic placeholders like "I'm processing your request." which are unhelpful
+        const fallbackError = "Sorry, I couldn't generate a response right now. Please try again.";
+        aiMessageData.text = fallbackError;
+        console.warn("AI returned empty text for sendMessage; response object:", aiResponseData);
+      }
+
+      // Handle confirmation requests - store as raw object so the model's confirmation
+      // can be JSON.stringified once by the repository layer (avoid double-encoding)
       if (aiResponseData.type === "confirmation_request") {
-        aiMessageData.confirmation = JSON.stringify({
+        aiMessageData.confirmation = {
           action: aiResponseData.action,
           data: aiResponseData.data,
-        });
+        };
       }
 
       // Handle tasks in response
@@ -327,16 +391,64 @@ export const confirmAction = async (
     const { messageId, confirm, action, data } = req.body;
 
     if (!messageId || confirm === undefined) {
-      throw new AppError("Message ID and confirm status are required", 400);
+      throw new AppError(
+        "Message ID and confirm status are required",
+        400,
+        "INVALID_REQUEST"
+      );
     }
 
-    // Update message confirmation
+    // Read the existing message so we can preserve any action/data the AI originally attached
+    const existingMessage = await ChatSessionModel.getMessageById(messageId);
+    if (!existingMessage) {
+      throw new AppError("Message not found", 404, "MESSAGE_NOT_FOUND");
+    }
+
+    // Try to parse stored confirmation (if any). Be resilient to single or double-stringified values.
+    let storedConfirmation: any = null;
+    if (existingMessage.confirmation) {
+      try {
+        storedConfirmation =
+          typeof existingMessage.confirmation === "string"
+            ? JSON.parse(existingMessage.confirmation)
+            : existingMessage.confirmation;
+
+        // If it was double-encoded (a string that contains JSON), parse again
+        if (typeof storedConfirmation === "string") {
+          try {
+            storedConfirmation = JSON.parse(storedConfirmation);
+          } catch (e) {
+            // ignore, keep the string
+          }
+        }
+      } catch (e) {
+        console.warn("Failed to parse stored confirmation on message:", e);
+        storedConfirmation = null;
+      }
+    }
+
+    // Resolve the action/data to use for this confirmation - prefer request body, fall back to stored confirmation
+    let resolvedAction = action ?? storedConfirmation?.action ?? null;
+    let resolvedData = data ?? storedConfirmation?.data ?? null;
+
+    // If the action targets an existing task, we expect the ID to be present from the tool call.
+    // We no longer do heuristic resolution here because the AI agent is responsible for finding the ID via tools.
+    
+    // Update message confirmation with merged/validated data
     const updatedMessage = await ChatSessionModel.updateMessage(messageId, {
-      action,
-      data,
+      action: resolvedAction,
+      data: resolvedData,
       confirmed: confirm,
       cancelled: !confirm,
     });
+
+    // Ensure the session belongs to the requesting user
+    const owningSession = await ChatSessionModel.findById(
+      updatedMessage.session_id
+    );
+    if (!owningSession || owningSession.user_id !== userId) {
+      throw new AppError("Unauthorized", 403, "UNAUTHORIZED");
+    }
 
     if (!confirm) {
       res.json({
@@ -345,7 +457,7 @@ export const confirmAction = async (
       });
       return;
     }
-
+    
     // Execute the confirmed action using existing AI service
     try {
       let aiResponseData: any = null;
@@ -356,7 +468,19 @@ export const confirmAction = async (
         status: () => mockRes,
       } as any;
 
-      // Call existing AI confirm action function
+      // Ensure we pass the confirmed action/data to the handler
+      req.body = {
+        ...req.body,
+        action: resolvedAction,
+        data: resolvedData,
+      };
+
+      console.debug("Calling aiConfirmAction with", {
+        action: resolvedAction,
+        data: resolvedData,
+      });
+
+      // Call AI confirm action function (now just DB execution)
       await aiConfirmAction(req, mockRes);
 
       if (!aiResponseData) {
@@ -364,43 +488,39 @@ export const confirmAction = async (
       }
 
       // Add confirmation response message
+      const fallbackText = aiResponseData?.text || "Action confirmed.";
+
       const confirmationResponse = await ChatSessionModel.addMessage({
         session_id: updatedMessage.session_id,
-        text: aiResponseData.text || `Action confirmed and executed: ${action}`,
+        text: fallbackText,
         is_user: false,
-        tasks: aiResponseData.tasks
-          ? JSON.stringify(aiResponseData.tasks)
-          : null,
+        tasks: Array.isArray(aiResponseData?.data) // if it returns tasks array
+          ? aiResponseData.data
+          : undefined,
       });
 
       res.json({
         success: true,
         data: confirmationResponse,
+        tasks: Array.isArray(aiResponseData?.data)
+          ? aiResponseData.data
+          : null,
+        action: resolvedAction ?? null,
       });
     } catch (aiError: any) {
       console.error("AI confirmation error:", aiError);
-
-      // Determine user-friendly error message
-      let errorText = "Failed to execute the action. Please try again.";
-
-      if (aiError?.status === 429 || aiError?.message?.includes("rate limit")) {
-        errorText =
-          "Too many requests. Please wait a moment before confirming again.";
-      } else if (aiError?.message?.includes("not found")) {
-        errorText = "The task could not be found. It may have been deleted.";
-      }
-
-      // Add error message
+      const errorText = "Failed to execute the action. Please try again.";
+      
       const errorResponse = await ChatSessionModel.addMessage({
-        session_id: updatedMessage.session_id,
-        text: errorText,
-        is_user: false,
-      });
+          session_id: updatedMessage.session_id,
+          text: errorText,
+          is_user: false,
+        });
 
-      res.json({
-        success: true,
-        data: errorResponse,
-      });
+        res.json({
+          success: true,
+          data: errorResponse,
+        });
     }
   } catch (error) {
     next(error);

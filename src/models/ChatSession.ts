@@ -5,7 +5,6 @@ import {
   CreateChatSessionDto,
   UpdateChatSessionDto,
   CreateChatMessageDto,
-  RecentChat,
   CreateRecentChatDto,
   ChatHistory,
 } from "../types";
@@ -257,6 +256,20 @@ export class ChatSessionModel {
     }
   }
 
+  // Get message by ID
+  static async getMessageById(id: string): Promise<ChatMessage | null> {
+    try {
+      const result = await query(`SELECT * FROM chat_messages WHERE id = $1`, [
+        id,
+      ]);
+
+      if (result.rows.length === 0) return null;
+      return result.rows[0] as ChatMessage;
+    } catch (error: any) {
+      throw new DatabaseError(`Failed to get message: ${error.message}`);
+    }
+  }
+
   // Get recent chats for user
   static async getRecentChats(
     userId: string,
@@ -271,7 +284,7 @@ export class ChatSessionModel {
         [userId, limit]
       );
 
-      return result.rows.map((row) => row.query);
+      return result.rows.map((row: any) => row.query);
     } catch (error: any) {
       throw new DatabaseError(`Failed to get recent chats: ${error.message}`);
     }
