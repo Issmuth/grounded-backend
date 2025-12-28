@@ -98,6 +98,29 @@ export const toolSchemas: Groq.Chat.Completions.ChatCompletionTool[] = [
             description:
               "List of subtasks to create with the task. Each subtask needs a title.",
           },
+          recurrence: {
+            type: "object",
+            properties: {
+              type: {
+                type: "string",
+                enum: ["none", "daily", "weekly"],
+                description:
+                  "Recurrence type: 'none' for one-time tasks, 'daily' for every day, 'weekly' for specific days",
+              },
+              days: {
+                type: "array",
+                items: {
+                  type: "string",
+                  enum: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+                },
+                description:
+                  "Days of the week for weekly recurrence (e.g., ['Mon', 'Wed', 'Fri'])",
+              },
+            },
+            required: ["type"],
+            description:
+              "Task recurrence settings. Use for routines or repeating tasks.",
+          },
         },
         required: ["action"],
       },
@@ -127,6 +150,10 @@ interface ProposeActionArgs {
   priority?: string;
   tags?: string[];
   subtasks?: Array<{ title: string }>;
+  recurrence?: {
+    type: "none" | "daily" | "weekly";
+    days?: string[];
+  };
 }
 
 export async function executeGetTasks(
@@ -187,6 +214,8 @@ export async function executeGetTasks(
         title: st.title,
         isCompleted: st.is_completed,
       }));
+      // Format recurrence info
+      const recurrence = t.recurrence || { type: "none" };
       return {
         id: t.id,
         title: t.title,
@@ -199,6 +228,8 @@ export async function executeGetTasks(
         taskType: isGrounded ? "grounded" : "regular",
         subtasks: subtasksInfo,
         subtaskCount: subtasksInfo.length,
+        recurrence: recurrence,
+        isRecurring: recurrence.type !== "none",
       };
     });
 
@@ -235,7 +266,7 @@ function formatTags(tags?: string[]): Array<{ type: string; label: string }> {
 export function executeProposeAction(args: ProposeActionArgs): string {
   console.log("✅ propose_action called with:", args);
   // Convert flat args to the data structure expected by confirmAction
-  const { action, task_id, tags, subtasks, ...rest } = args;
+  const { action, task_id, tags, subtasks, recurrence, ...rest } = args;
   return JSON.stringify({
     action,
     data: {
@@ -246,6 +277,7 @@ export function executeProposeAction(args: ProposeActionArgs): string {
       endTime: rest.end_time,
       tags: formatTags(tags),
       subtasks: subtasks || [],
+      recurrence: recurrence || { type: "none" },
     },
     _isProposal: true,
   });

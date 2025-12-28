@@ -150,6 +150,38 @@ Subtasks help break down complex tasks into smaller, actionable steps.
 - Include the new subtasks array (this replaces existing subtasks)
 - First get_tasks to find the task and see existing subtasks
 
+## RECURRENCE / ROUTINES (Important!)
+Tasks can be one-time or recurring. Use recurrence for habits, routines, and repeating tasks.
+
+### Recurrence Types:
+1. **none** - One-time task (default)
+   - Format: recurrence: { type: "none" }
+   
+2. **daily** - Repeats every day
+   - Format: recurrence: { type: "daily" }
+   - Use for: daily habits, morning routines, daily check-ins
+   
+3. **weekly** - Repeats on specific days of the week
+   - Format: recurrence: { type: "weekly", days: ["Mon", "Wed", "Fri"] }
+   - Days must be: "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
+   - Use for: gym schedules, weekly meetings, specific day routines
+
+### When to suggest recurrence:
+- User mentions: "every day", "daily", "routine", "habit", "every morning/evening"
+- User mentions specific days: "every Monday", "on weekdays", "on weekends"
+- User mentions: "weekly", "recurring", "repeating"
+
+### Day shortcuts:
+- "Weekdays" = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+- "Weekends" = ["Sat", "Sun"]
+- "Every day" = use type: "daily" instead of weekly with all days
+
+### Examples:
+- "Add a daily meditation" → recurrence: { type: "daily" }
+- "Gym on Monday, Wednesday, Friday" → recurrence: { type: "weekly", days: ["Mon", "Wed", "Fri"] }
+- "Weekly team meeting on Tuesdays" → recurrence: { type: "weekly", days: ["Tue"] }
+- "Morning jog on weekdays" → recurrence: { type: "weekly", days: ["Mon", "Tue", "Wed", "Thu", "Fri"] }
+
 ## TASK TYPES (Important!)
 Tasks are classified by their tags:
 
@@ -230,6 +262,42 @@ User: "Add some subtasks to my cleaning task"
     ]
   })
 
+**Example 7: Daily recurring task**
+User: "Add a daily meditation routine at 7am"
+→ get_tasks({ date: "${localDate}" }) to check schedule
+→ propose_action({ 
+    action: "create_task", 
+    title: "Morning Meditation", 
+    date: "${localDate}", 
+    start_time: "07:00",
+    description: "Daily mindfulness meditation session to start the day centered",
+    tags: ["grounded"],
+    recurrence: { type: "daily" }
+  })
+
+**Example 8: Weekly recurring task**
+User: "I want to go to the gym every Monday, Wednesday and Friday at 6pm"
+→ get_tasks({ date: "${localDate}" }) to check schedule
+→ propose_action({ 
+    action: "create_task", 
+    title: "Gym Workout", 
+    date: "${localDate}", 
+    start_time: "18:00",
+    end_time: "19:30",
+    description: "Regular gym workout session",
+    tags: ["regular"],
+    recurrence: { type: "weekly", days: ["Mon", "Wed", "Fri"] }
+  })
+
+**Example 9: Make existing task recurring**
+User: "Make my reading task a daily habit"
+→ get_tasks({ query: "reading" }) to find the task
+→ propose_action({ 
+    action: "update_task", 
+    task_id: "[found task id]",
+    recurrence: { type: "daily" }
+  })
+
 ## 🚫 What NOT To Do
 - ❌ Creating tasks without checking for conflicts first
 - ❌ Creating tasks without a description
@@ -238,7 +306,9 @@ User: "Add some subtasks to my cleaning task"
 - ❌ Inventing task IDs instead of using actual IDs from search results
 - ❌ Forgetting to include tags (always specify ["regular"] or ["grounded"])
 - ❌ Adding unnecessary subtasks to simple tasks
-- ❌ Forgetting to suggest subtasks for complex multi-step tasks`;
+- ❌ Forgetting to suggest subtasks for complex multi-step tasks
+- ❌ Using weekly recurrence without specifying days
+- ❌ Forgetting to ask about recurrence for habit/routine tasks`;
 }
 
 // Type definitions for Groq SDK responses
@@ -377,6 +447,7 @@ export const chat = async (req: Request, res: Response) => {
           date,
           tags,
           subtasks,
+          recurrence,
           ...rest
         } = proposal;
 
@@ -400,13 +471,22 @@ export const chat = async (req: Request, res: Response) => {
               }: ${subtasksList.map((s: any) => s.title).join(", ")}`
             : "";
 
+        // Format recurrence info for confirmation message
+        const recurrenceData = recurrence || { type: "none" };
+        let recurrenceText = "";
+        if (recurrenceData.type === "daily") {
+          recurrenceText = " (repeats daily)";
+        } else if (recurrenceData.type === "weekly" && recurrenceData.days) {
+          recurrenceText = ` (repeats ${recurrenceData.days.join(", ")})`;
+        }
+
         let confirmationText = "I've prepared that for you. Please confirm.";
         if (action === "create_task") {
           confirmationText = `I'll create ${
             isGrounded ? "a focus session" : "a task"
           } "${title || "New task"}"${date ? ` for ${date}` : ""}${
             start_time ? ` at ${start_time}` : ""
-          }${subtasksText}${
+          }${recurrenceText}${subtasksText}${
             isGrounded ? " (grounded - no device distractions)" : ""
           }. Please confirm.`;
         } else if (action === "update_task") {
@@ -414,7 +494,7 @@ export const chat = async (req: Request, res: Response) => {
             start_time ? ` to ${start_time}` : ""
           }${
             date ? ` on ${date}` : ""
-          }${subtasksText}${taskTypeLabel}. Please confirm.`;
+          }${recurrenceText}${subtasksText}${taskTypeLabel}. Please confirm.`;
         } else if (action === "delete_task") {
           confirmationText = "I'll delete this task. Please confirm.";
         }
@@ -430,6 +510,7 @@ export const chat = async (req: Request, res: Response) => {
             endTime: end_time,
             tags: formattedTags,
             subtasks: subtasksList,
+            recurrence: recurrenceData,
             ...rest,
           },
           text: confirmationText,
