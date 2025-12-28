@@ -119,6 +119,36 @@ Every task MUST have:
 - **start_time**: In HH:MM format (24-hour)
 - **description**: A helpful description (generate one based on context if user doesn't provide)
 - **tags**: Task type classification (see below)
+- **subtasks**: Optional list of subtasks (see below)
+
+## SUBTASKS (Important!)
+Subtasks help break down complex tasks into smaller, actionable steps.
+
+### When to suggest subtasks:
+- Tasks that involve multiple steps (cooking, cleaning, projects)
+- Tasks that could benefit from a checklist
+- When the user mentions multiple things to do within one task
+
+### How to create subtasks:
+- Include a "subtasks" array in propose_action
+- Each subtask needs a "title" field
+- Keep subtask titles short and actionable
+- Order them logically (prep first, then main action, then cleanup)
+
+### Examples of tasks that should have subtasks:
+- "Cook dinner" → subtasks: ["Check recipe ingredients", "Buy missing ingredients", "Prep vegetables", "Cook main dish", "Set the table"]
+- "Clean room" → subtasks: ["Pick up clothes", "Make bed", "Dust surfaces", "Vacuum floor", "Take out trash"]
+- "Prepare presentation" → subtasks: ["Research topic", "Create outline", "Design slides", "Practice delivery"]
+
+### When NOT to add subtasks:
+- Simple, single-action tasks ("Call mom", "Send email")
+- Quick errands ("Buy milk")
+- Unless the user specifically asks for subtasks
+
+### Adding subtasks to existing tasks:
+- Use update_task action with the task_id
+- Include the new subtasks array (this replaces existing subtasks)
+- First get_tasks to find the task and see existing subtasks
 
 ## TASK TYPES (Important!)
 Tasks are classified by their tags:
@@ -167,13 +197,48 @@ User: "I need to study for my exam tomorrow morning"
 → get_tasks({ date: "${tomorrowDate}" }) to check schedule
 → propose_action({ action: "create_task", title: "Study for Exam", date: "${tomorrowDate}", start_time: "09:00", end_time: "11:00", description: "Focused study session for upcoming exam", tags: ["grounded"] })
 
+**Example 5: Task with subtasks**
+User: "Add a task to cook pasta for dinner tonight"
+→ get_tasks({ date: "${localDate}" }) to check schedule
+→ propose_action({ 
+    action: "create_task", 
+    title: "Cook Pasta Dinner", 
+    date: "${localDate}", 
+    start_time: "18:00",
+    description: "Prepare a delicious pasta dinner",
+    tags: ["regular"],
+    subtasks: [
+      { title: "Check pantry for ingredients" },
+      { title: "Boil water for pasta" },
+      { title: "Prepare sauce" },
+      { title: "Cook pasta al dente" },
+      { title: "Plate and serve" }
+    ]
+  })
+
+**Example 6: Adding subtasks to existing task**
+User: "Add some subtasks to my cleaning task"
+→ get_tasks({ query: "cleaning" }) to find the task
+→ propose_action({ 
+    action: "update_task", 
+    task_id: "[found task id]",
+    subtasks: [
+      { title: "Dust all surfaces" },
+      { title: "Vacuum floors" },
+      { title: "Clean windows" },
+      { title: "Take out trash" }
+    ]
+  })
+
 ## 🚫 What NOT To Do
 - ❌ Creating tasks without checking for conflicts first
 - ❌ Creating tasks without a description
 - ❌ Proposing tasks when missing time (ask the user!)
 - ❌ Ignoring scheduling conflicts
 - ❌ Inventing task IDs instead of using actual IDs from search results
-- ❌ Forgetting to include tags (always specify ["regular"] or ["grounded"])`;
+- ❌ Forgetting to include tags (always specify ["regular"] or ["grounded"])
+- ❌ Adding unnecessary subtasks to simple tasks
+- ❌ Forgetting to suggest subtasks for complex multi-step tasks`;
 }
 
 // Type definitions for Groq SDK responses
@@ -311,6 +376,7 @@ export const chat = async (req: Request, res: Response) => {
           title,
           date,
           tags,
+          subtasks,
           ...rest
         } = proposal;
 
@@ -325,19 +391,30 @@ export const chat = async (req: Request, res: Response) => {
         ];
         const taskTypeLabel = isGrounded ? " as a focus session" : "";
 
+        // Format subtasks info for confirmation message
+        const subtasksList = subtasks || [];
+        const subtasksText =
+          subtasksList.length > 0
+            ? ` with ${subtasksList.length} subtask${
+                subtasksList.length > 1 ? "s" : ""
+              }: ${subtasksList.map((s: any) => s.title).join(", ")}`
+            : "";
+
         let confirmationText = "I've prepared that for you. Please confirm.";
         if (action === "create_task") {
           confirmationText = `I'll create ${
             isGrounded ? "a focus session" : "a task"
           } "${title || "New task"}"${date ? ` for ${date}` : ""}${
             start_time ? ` at ${start_time}` : ""
-          }${
+          }${subtasksText}${
             isGrounded ? " (grounded - no device distractions)" : ""
           }. Please confirm.`;
         } else if (action === "update_task") {
           confirmationText = `I'll update the task${
             start_time ? ` to ${start_time}` : ""
-          }${date ? ` on ${date}` : ""}${taskTypeLabel}. Please confirm.`;
+          }${
+            date ? ` on ${date}` : ""
+          }${subtasksText}${taskTypeLabel}. Please confirm.`;
         } else if (action === "delete_task") {
           confirmationText = "I'll delete this task. Please confirm.";
         }
@@ -352,6 +429,7 @@ export const chat = async (req: Request, res: Response) => {
             startTime: start_time,
             endTime: end_time,
             tags: formattedTags,
+            subtasks: subtasksList,
             ...rest,
           },
           text: confirmationText,
@@ -383,27 +461,37 @@ export const confirmAction = async (req: Request, res: Response) => {
 
     console.log("Executing confirmed action:", action, data);
 
+    // Destructure to separate camelCase fields from the rest
+    const { startTime, endTime, ...restData } = data;
+
+    // Build dbData with snake_case field names for database
+    const dbData: any = {
+      ...restData,
+      start_time: startTime || data.start_time,
+      end_time: endTime || data.end_time,
+    };
+
     let result: any = null;
     let replyText = "Done.";
 
     if (action === "create_task") {
-      const task = await TaskModel.create({ ...data, user_id: userId });
+      const task = await TaskModel.create({ ...dbData, user_id: userId });
       result = task;
       replyText = `Created task: ${task.title}`;
     } else if (action === "update_task") {
-      if (!data.id) throw new Error("Missing ID for update_task");
-      const task = await TaskModel.update(data.id, data);
+      if (!dbData.id) throw new Error("Missing ID for update_task");
+      const task = await TaskModel.update(dbData.id, dbData);
       result = task;
       replyText = `Updated task: ${task?.title}`;
     } else if (action === "delete_task") {
-      if (!data.id) throw new Error("Missing ID for delete_task");
-      await TaskModel.delete(data.id);
+      if (!dbData.id) throw new Error("Missing ID for delete_task");
+      await TaskModel.delete(dbData.id);
       replyText = "Task deleted.";
     } else if (action === "create_subtask") {
-      if (!data.task_id)
+      if (!dbData.task_id)
         throw new Error("Missing parent task_id for create_subtask");
-      const sub = await TaskModel.createSubtask(data.task_id, {
-        title: data.subtask_title || "Subtask",
+      const sub = await TaskModel.createSubtask(dbData.task_id, {
+        title: dbData.subtask_title || "Subtask",
       });
       result = sub;
       replyText = "Subtask created.";

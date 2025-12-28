@@ -83,6 +83,21 @@ export const toolSchemas: Groq.Chat.Completions.ChatCompletionTool[] = [
             description:
               "Task tags. Use ['grounded'] for focus sessions requiring concentration, or ['regular'] for normal tasks.",
           },
+          subtasks: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                title: {
+                  type: "string",
+                  description: "Subtask title",
+                },
+              },
+              required: ["title"],
+            },
+            description:
+              "List of subtasks to create with the task. Each subtask needs a title.",
+          },
         },
         required: ["action"],
       },
@@ -111,6 +126,7 @@ interface ProposeActionArgs {
   description?: string;
   priority?: string;
   tags?: string[];
+  subtasks?: Array<{ title: string }>;
 }
 
 export async function executeGetTasks(
@@ -165,6 +181,12 @@ export async function executeGetTasks(
       const isGrounded = tagsArray.some(
         (tag: any) => tag?.type === "grounded" || tag === "grounded"
       );
+      // Include subtasks info
+      const subtasksInfo = (t.subtasks || []).map((st: any) => ({
+        id: st.id,
+        title: st.title,
+        isCompleted: st.is_completed,
+      }));
       return {
         id: t.id,
         title: t.title,
@@ -175,6 +197,8 @@ export async function executeGetTasks(
         isCompleted: t.is_completed,
         tags: tagsArray,
         taskType: isGrounded ? "grounded" : "regular",
+        subtasks: subtasksInfo,
+        subtaskCount: subtasksInfo.length,
       };
     });
 
@@ -211,7 +235,7 @@ function formatTags(tags?: string[]): Array<{ type: string; label: string }> {
 export function executeProposeAction(args: ProposeActionArgs): string {
   console.log("✅ propose_action called with:", args);
   // Convert flat args to the data structure expected by confirmAction
-  const { action, task_id, tags, ...rest } = args;
+  const { action, task_id, tags, subtasks, ...rest } = args;
   return JSON.stringify({
     action,
     data: {
@@ -221,6 +245,7 @@ export function executeProposeAction(args: ProposeActionArgs): string {
       startTime: rest.start_time,
       endTime: rest.end_time,
       tags: formatTags(tags),
+      subtasks: subtasks || [],
     },
     _isProposal: true,
   });
