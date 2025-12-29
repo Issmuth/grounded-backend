@@ -11,6 +11,7 @@ import {
   sendMessage,
   confirmAction,
   getRecentChats,
+  saveVoiceTranscript,
 } from "../controllers/chatController";
 
 const router = Router();
@@ -33,5 +34,8 @@ router.delete("/sessions/:id", deleteSession);
 // Messaging
 router.post("/message", sendMessage);
 router.post("/confirm", confirmAction);
+
+// Voice transcript (Requirements: 3.4, 7.1, 7.2, 7.3, 7.4)
+router.post("/voice-transcript", saveVoiceTranscript);
 
 export default router;

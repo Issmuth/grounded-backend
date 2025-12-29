@@ -243,10 +243,19 @@ export const sendMessage = async (
           let text = m.text;
           if (m.tasks) {
             try {
-              const tasks = typeof m.tasks === 'string' ? JSON.parse(m.tasks) : m.tasks;
+              const tasks =
+                typeof m.tasks === "string" ? JSON.parse(m.tasks) : m.tasks;
               if (Array.isArray(tasks) && tasks.length > 0) {
-                 const taskContext = tasks.map((t: any) => JSON.stringify({id: t.id, title: t.title, date: t.date || t.start_time})).join('; ');
-                 text += `\n[System Note: The user saw these tasks: ${taskContext}]`;
+                const taskContext = tasks
+                  .map((t: any) =>
+                    JSON.stringify({
+                      id: t.id,
+                      title: t.title,
+                      date: t.date || t.start_time,
+                    })
+                  )
+                  .join("; ");
+                text += `\n[System Note: The user saw these tasks: ${taskContext}]`;
               }
             } catch (e) {
               // ignore
@@ -293,8 +302,12 @@ export const sendMessage = async (
       if (aiText) {
         aiMessageData.text = aiText;
       } else if (aiResponseData?.type === "confirmation_request") {
-        aiMessageData.text = "I've prepared that for you. Does this look right?";
-      } else if (Array.isArray(aiResponseData?.tasks) && aiResponseData.tasks.length > 0) {
+        aiMessageData.text =
+          "I've prepared that for you. Does this look right?";
+      } else if (
+        Array.isArray(aiResponseData?.tasks) &&
+        aiResponseData.tasks.length > 0
+      ) {
         // Build a concise list of found tasks for the user to see
         const list = (aiResponseData.tasks || [])
           .slice(0, 5)
@@ -311,9 +324,13 @@ export const sendMessage = async (
         aiMessageData.tasks = JSON.stringify(aiResponseData.tasks);
       } else {
         // Avoid generic placeholders like "I'm processing your request." which are unhelpful
-        const fallbackError = "Sorry, I couldn't generate a response right now. Please try again.";
+        const fallbackError =
+          "Sorry, I couldn't generate a response right now. Please try again.";
         aiMessageData.text = fallbackError;
-        console.warn("AI returned empty text for sendMessage; response object:", aiResponseData);
+        console.warn(
+          "AI returned empty text for sendMessage; response object:",
+          aiResponseData
+        );
       }
 
       // Handle confirmation requests - store as raw object so the model's confirmation
@@ -433,7 +450,7 @@ export const confirmAction = async (
 
     // If the action targets an existing task, we expect the ID to be present from the tool call.
     // We no longer do heuristic resolution here because the AI agent is responsible for finding the ID via tools.
-    
+
     // Update message confirmation with merged/validated data
     const updatedMessage = await ChatSessionModel.updateMessage(messageId, {
       action: resolvedAction,
@@ -457,7 +474,7 @@ export const confirmAction = async (
       });
       return;
     }
-    
+
     // Execute the confirmed action using existing AI service
     try {
       let aiResponseData: any = null;
@@ -502,25 +519,23 @@ export const confirmAction = async (
       res.json({
         success: true,
         data: confirmationResponse,
-        tasks: Array.isArray(aiResponseData?.data)
-          ? aiResponseData.data
-          : null,
+        tasks: Array.isArray(aiResponseData?.data) ? aiResponseData.data : null,
         action: resolvedAction ?? null,
       });
     } catch (aiError: any) {
       console.error("AI confirmation error:", aiError);
       const errorText = "Failed to execute the action. Please try again.";
-      
-      const errorResponse = await ChatSessionModel.addMessage({
-          session_id: updatedMessage.session_id,
-          text: errorText,
-          is_user: false,
-        });
 
-        res.json({
-          success: true,
-          data: errorResponse,
-        });
+      const errorResponse = await ChatSessionModel.addMessage({
+        session_id: updatedMessage.session_id,
+        text: errorText,
+        is_user: false,
+      });
+
+      res.json({
+        success: true,
+        data: errorResponse,
+      });
     }
   } catch (error) {
     next(error);
@@ -540,6 +555,73 @@ export const getRecentChats = async (
     res.json({
       success: true,
       data: recentChats,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Save voice transcript to session (Requirements: 3.4, 7.1, 7.2, 7.3, 7.4)
+export const saveVoiceTranscript = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const userId = req.user!.uid;
+    const { sessionId, transcript } = req.body;
+
+    if (!sessionId || !transcript || !Array.isArray(transcript)) {
+      throw new AppError(
+        "Session ID and transcript array are required",
+        400,
+        "INVALID_REQUEST"
+      );
+    }
+
+    // Verify session belongs to user
+    const session = await ChatSessionModel.findById(sessionId);
+    if (!session) {
+      throw new AppError("Session not found", 404, "SESSION_NOT_FOUND");
+    }
+
+    if (session.user_id !== userId) {
+      throw new AppError("Unauthorized", 403, "UNAUTHORIZED");
+    }
+
+    // Save each transcript message
+    const savedMessages = [];
+    for (const message of transcript) {
+      if (!message.text || typeof message.text !== "string") {
+        continue; // Skip invalid messages
+      }
+
+      const savedMessage = await ChatSessionModel.addMessage({
+        session_id: sessionId,
+        text: message.text,
+        is_user: message.isUser === true,
+      });
+      savedMessages.push(savedMessage);
+    }
+
+    // Update session title if it's still "New Chat" or "Voice Conversation"
+    if (transcript.length > 0) {
+      const firstUserMessage = transcript.find((m: any) => m.isUser);
+      if (firstUserMessage) {
+        await ChatSessionModel.updateTitleFromMessage(
+          sessionId,
+          firstUserMessage.text
+        );
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        sessionId,
+        messagesCount: savedMessages.length,
+        messages: savedMessages,
+      },
     });
   } catch (error) {
     next(error);
