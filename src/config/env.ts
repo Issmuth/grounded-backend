@@ -19,6 +19,9 @@ interface EnvironmentConfig {
   GEMINI_API_KEY: string;
   GROQ_API_KEY?: string;
   GROQ_MODEL?: string;
+  // ElevenLabs Voice Assistant
+  ELEVENLABS_API_KEY?: string;
+  ELEVENLABS_AGENT_ID?: string;
 }
 
 const requiredEnvVars = [
@@ -66,4 +69,7 @@ export const env: EnvironmentConfig = {
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || "",
   GROQ_API_KEY: process.env.GROQ_API_KEY || "",
   GROQ_MODEL: process.env.GROQ_MODEL || "",
+  // ElevenLabs Voice Assistant
+  ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY || "",
+  ELEVENLABS_AGENT_ID: process.env.ELEVENLABS_AGENT_ID || "",
 };

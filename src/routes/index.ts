@@ -5,6 +5,7 @@ import userRoutes from "./users";
 import taskRoutes from "./tasks";
 import aiRoutes from "./ai";
 import chatRoutes from "./chatRoutes";
+import voiceRoutes from "./voice";
 
 const router = Router();
 
@@ -19,5 +20,8 @@ router.use("/api/users", userRoutes);
 router.use("/api/tasks", taskRoutes);
 router.use("/api/ai", aiRoutes);
 router.use("/api/chat", chatRoutes);
+
+// Voice tools routes (ElevenLabs server tools - no Firebase auth, uses dynamic variables)
+router.use("/api/voice", voiceRoutes);
 
 export default router;
