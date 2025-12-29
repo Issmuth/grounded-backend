@@ -534,6 +534,15 @@ export const chat = async (req: Request, res: Response) => {
   }
 };
 
+// Helper to remove undefined values from an object (postgres driver throws on undefined)
+function removeUndefinedValues<T extends Record<string, any>>(
+  obj: T
+): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([_, value]) => value !== undefined)
+  ) as Partial<T>;
+}
+
 // Confirm Action Handler - Executes the actual DB write
 export const confirmAction = async (req: Request, res: Response) => {
   try {
@@ -546,11 +555,11 @@ export const confirmAction = async (req: Request, res: Response) => {
     const { startTime, endTime, ...restData } = data;
 
     // Build dbData with snake_case field names for database
-    const dbData: any = {
+    const dbData: any = removeUndefinedValues({
       ...restData,
       start_time: startTime || data.start_time,
       end_time: endTime || data.end_time,
-    };
+    });
 
     let result: any = null;
     let replyText = "Done.";
@@ -561,7 +570,10 @@ export const confirmAction = async (req: Request, res: Response) => {
       replyText = `Created task: ${task.title}`;
     } else if (action === "update_task") {
       if (!dbData.id) throw new Error("Missing ID for update_task");
-      const task = await TaskModel.update(dbData.id, dbData);
+      const task = await TaskModel.update(
+        dbData.id,
+        removeUndefinedValues(dbData)
+      );
       result = task;
       replyText = `Updated task: ${task?.title}`;
     } else if (action === "delete_task") {

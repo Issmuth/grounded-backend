@@ -40,8 +40,10 @@ export class TaskModel {
     let date_raw = task.date ?? null;
     const tags = task.tags ?? [];
     const recurrence = task.recurrence ?? {};
-    const is_completed = typeof task.is_completed === "boolean" ? task.is_completed : false;
-    const is_deleted = typeof task.is_deleted === "boolean" ? task.is_deleted : false;
+    const is_completed =
+      typeof task.is_completed === "boolean" ? task.is_completed : false;
+    const is_deleted =
+      typeof task.is_deleted === "boolean" ? task.is_deleted : false;
 
     // Helper: extract date (YYYY-MM-DD) and time (HH:MM:SS) from ISO datetime strings
     const extractDateTime = (val: any) => {
@@ -94,7 +96,12 @@ export class TaskModel {
       // timeStr expected HH:MM:SS
       const parts = timeStr.split(":");
       const now = new Date();
-      now.setHours(Number(parts[0] || 0), Number(parts[1] || 0), Number(parts[2] || 0), 0);
+      now.setHours(
+        Number(parts[0] || 0),
+        Number(parts[1] || 0),
+        Number(parts[2] || 0),
+        0
+      );
       return now;
     };
 
@@ -103,7 +110,9 @@ export class TaskModel {
       try {
         const dt = toDate(end_time_raw);
         dt.setHours(dt.getHours() - 1);
-        start_time_raw = `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}:${String(dt.getSeconds()).padStart(2, "0")}`;
+        start_time_raw = `${String(dt.getHours()).padStart(2, "0")}:${String(
+          dt.getMinutes()
+        ).padStart(2, "0")}:${String(dt.getSeconds()).padStart(2, "0")}`;
       } catch (e) {
         start_time_raw = "09:00:00";
       }
@@ -113,7 +122,9 @@ export class TaskModel {
       try {
         const dt = toDate(start_time_raw);
         dt.setHours(dt.getHours() + 1);
-        end_time_raw = `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}:${String(dt.getSeconds()).padStart(2, "0")}`;
+        end_time_raw = `${String(dt.getHours()).padStart(2, "0")}:${String(
+          dt.getMinutes()
+        ).padStart(2, "0")}:${String(dt.getSeconds()).padStart(2, "0")}`;
       } catch (e) {
         end_time_raw = "10:00:00";
       }
@@ -186,7 +197,8 @@ export class TaskModel {
     startDate: string,
     endDate: string
   ): Promise<Task[]> {
-    const tasks = await sql<Task[]>`
+    // Fetch tasks that fall within the date range
+    const dateTasks = await sql<Task[]>`
       SELECT * FROM tasks 
       WHERE user_id = ${userId} 
       AND date >= ${startDate} AND date <= ${endDate}
@@ -194,13 +206,111 @@ export class TaskModel {
       ORDER BY date ASC, start_time ASC
     `;
 
-    for (const task of tasks) {
-      task.subtasks = await sql<Subtask[]>`
-        SELECT * FROM subtasks WHERE task_id = ${task.id} ORDER BY order_index ASC
-      `;
+    // Fetch all recurring tasks (daily or weekly) that started before or on the end date
+    const recurringTasks = await sql<Task[]>`
+      SELECT * FROM tasks 
+      WHERE user_id = ${userId} 
+      AND is_deleted = false 
+      AND recurrence->>'type' IN ('daily', 'weekly')
+      AND date <= ${endDate}
+      ORDER BY start_time ASC
+    `;
+
+    // Helper to get day name from date string
+    const getDayName = (dateStr: string): string => {
+      const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const date = new Date(dateStr);
+      return days[date.getDay()];
+    };
+
+    // Helper to check if a recurring task should appear on a given date
+    const shouldShowOnDate = (task: Task, targetDateStr: string): boolean => {
+      const recurrence = task.recurrence;
+      if (!recurrence || recurrence.type === "none") return false;
+
+      const taskDate = new Date(task.date);
+      const targetDate = new Date(targetDateStr);
+
+      // Don't show before the task's start date
+      if (targetDate < taskDate) return false;
+
+      // Check end date if specified
+      if (recurrence.endDate) {
+        const endDate = new Date(recurrence.endDate);
+        if (targetDate > endDate) return false;
+      }
+
+      if (recurrence.type === "daily") {
+        return true;
+      }
+
+      if (recurrence.type === "weekly" && recurrence.days) {
+        const dayName = getDayName(targetDateStr);
+        return recurrence.days.includes(dayName);
+      }
+
+      return false;
+    };
+
+    // Generate all dates in the range
+    const dates: string[] = [];
+    const current = new Date(startDate);
+    const end = new Date(endDate);
+    while (current <= end) {
+      dates.push(current.toISOString().split("T")[0]);
+      current.setDate(current.getDate() + 1);
     }
 
-    return tasks;
+    // Collect all tasks including recurring instances
+    const allTasks: Task[] = [...dateTasks];
+    const existingIds = new Set(dateTasks.map((t) => t.id));
+
+    for (const dateStr of dates) {
+      for (const task of recurringTasks) {
+        // Skip if this task is already included for this date (original date matches)
+        if (task.date === dateStr && existingIds.has(task.id)) continue;
+
+        if (shouldShowOnDate(task, dateStr)) {
+          // Create a virtual instance with the target date
+          // Use a composite key to avoid duplicates
+          const virtualTask: Task = {
+            ...task,
+            date: dateStr,
+          };
+
+          // Only add if not already present for this date
+          const isDuplicate = allTasks.some(
+            (t) => t.id === task.id && t.date === dateStr
+          );
+          if (!isDuplicate) {
+            allTasks.push(virtualTask);
+          }
+        }
+      }
+    }
+
+    // Fetch subtasks for all unique task IDs
+    const uniqueTaskIds = [...new Set(allTasks.map((t) => t.id))];
+    for (const taskId of uniqueTaskIds) {
+      const subtasks = await sql<Subtask[]>`
+        SELECT * FROM subtasks WHERE task_id = ${taskId} ORDER BY order_index ASC
+      `;
+      // Assign subtasks to all instances of this task
+      for (const task of allTasks) {
+        if (task.id === taskId) {
+          task.subtasks = subtasks;
+        }
+      }
+    }
+
+    // Sort by date and start time
+    allTasks.sort((a, b) => {
+      const dateCompare = a.date.localeCompare(b.date);
+      if (dateCompare !== 0) return dateCompare;
+      return a.start_time.localeCompare(b.start_time);
+    });
+
+    return allTasks;
   }
 
   static async update(
@@ -215,6 +325,13 @@ export class TaskModel {
     delete updateData.created_at;
     delete updateData.subtasks;
 
+    // Remove undefined values (postgres driver throws UNDEFINED_VALUE error)
+    for (const key of Object.keys(updateData)) {
+      if (updateData[key] === undefined) {
+        delete updateData[key];
+      }
+    }
+
     // Handle JSON fields
     if (updateData.tags) updateData.tags = sql.json(updateData.tags);
     if (updateData.recurrence)
@@ -222,8 +339,11 @@ export class TaskModel {
 
     updateData.updated_at = new Date();
 
-    // Check if there is anything to update
-    if (Object.keys(updateData).length > 0) {
+    // Check if there is anything to update (besides updated_at)
+    const fieldsToUpdate = Object.keys(updateData).filter(
+      (k) => k !== "updated_at"
+    );
+    if (fieldsToUpdate.length > 0) {
       await sql`
         UPDATE tasks SET ${sql(updateData)}
         WHERE id = ${id}
@@ -254,8 +374,10 @@ export class TaskModel {
     subtask: Partial<Subtask>
   ): Promise<Subtask> {
     const title = subtask.title ?? null;
-    const is_completed = typeof subtask.is_completed === "boolean" ? subtask.is_completed : false;
-    const order_index = typeof subtask.order_index === "number" ? subtask.order_index : 0;
+    const is_completed =
+      typeof subtask.is_completed === "boolean" ? subtask.is_completed : false;
+    const order_index =
+      typeof subtask.order_index === "number" ? subtask.order_index : 0;
 
     const [newSubtask] = await sql<Subtask[]>`
       INSERT INTO subtasks (
@@ -273,8 +395,10 @@ export class TaskModel {
     updates: Partial<Subtask>
   ): Promise<Subtask | null> {
     const title = updates.title !== undefined ? updates.title : null;
-    const is_completed = updates.is_completed !== undefined ? updates.is_completed : null;
-    const order_index = updates.order_index !== undefined ? updates.order_index : null;
+    const is_completed =
+      updates.is_completed !== undefined ? updates.is_completed : null;
+    const order_index =
+      updates.order_index !== undefined ? updates.order_index : null;
 
     const [updatedSubtask] = await sql<Subtask[]>`
       UPDATE subtasks SET
