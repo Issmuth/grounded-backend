@@ -79,6 +79,13 @@ function filterTasksByQuery(tasks: Task[], query: string): Task[] {
   });
 }
 
+// Helper: Validate UUID format
+function isValidUUID(str: string): boolean {
+  const uuidRegex =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(str);
+}
+
 /**
  * GET_TASKS Server Tool
  * Called by ElevenLabs agent to retrieve user's tasks
@@ -312,7 +319,16 @@ async function handleUpdateTask(params: {
   if (!task_id) {
     return {
       success: false,
-      message: "Task ID is required to update a task",
+      message:
+        "Task ID is required to update a task. Use get_tasks first to find the task ID.",
+    };
+  }
+
+  // Validate UUID format
+  if (!isValidUUID(task_id)) {
+    return {
+      success: false,
+      message: `Invalid task ID "${task_id}". Please use get_tasks first to find the correct task ID (it should be a UUID like "abc12345-1234-5678-9abc-def012345678").`,
     };
   }
 
@@ -321,7 +337,7 @@ async function handleUpdateTask(params: {
   if (!existingTask) {
     return {
       success: false,
-      message: "Task not found",
+      message: "Task not found. Use get_tasks to find available tasks.",
     };
   }
 
@@ -380,7 +396,16 @@ async function handleDeleteTask(params: {
   if (!task_id) {
     return {
       success: false,
-      message: "Task ID is required to delete a task",
+      message:
+        "Task ID is required to delete a task. Use get_tasks first to find the task ID.",
+    };
+  }
+
+  // Validate UUID format
+  if (!isValidUUID(task_id)) {
+    return {
+      success: false,
+      message: `Invalid task ID "${task_id}". Please use get_tasks first to find the correct task ID (it should be a UUID like "abc12345-1234-5678-9abc-def012345678").`,
     };
   }
 
@@ -389,7 +414,7 @@ async function handleDeleteTask(params: {
   if (!existingTask) {
     return {
       success: false,
-      message: "Task not found",
+      message: "Task not found. Use get_tasks to find available tasks.",
     };
   }
 
