@@ -172,7 +172,7 @@ export const proposeAction = async (
 
     if (!user_id) {
       logger.warn("Voice tools: propose_action called without user_id");
-      res.status(400).json({
+      res.status(200).json({
         success: false,
         message: "User context is required",
       });
@@ -180,7 +180,7 @@ export const proposeAction = async (
     }
 
     if (!action) {
-      res.status(400).json({
+      res.status(200).json({
         success: false,
         message: "Action type is required",
       });
@@ -239,7 +239,10 @@ export const proposeAction = async (
       success: response.success,
     });
 
-    res.status(response.success ? 200 : 400).json(response);
+    // Always return 200 so ElevenLabs treats this as a handled tool call.
+    // Failures are indicated in the payload via success:false so the agent
+    // can ask the user for missing info instead of aborting with HTTP 400.
+    res.status(200).json(response);
   } catch (error) {
     logger.error("Voice tools: propose_action error", { error });
     res.status(500).json({
