@@ -6,6 +6,8 @@ import { logger } from "../utils/logger";
 interface GetTasksRequest {
   query?: string;
   date?: string;
+  start_date?: string;
+  end_date?: string;
   user_id: string; // Passed via ElevenLabs dynamic variables
 }
 
@@ -19,6 +21,11 @@ interface ProposeActionRequest {
   end_time?: string;
   description?: string;
   priority?: string;
+  tags?: string[];
+  recurrence?: {
+    type: "none" | "daily" | "weekly";
+    days?: string[];
+  };
 }
 
 // Response types for voice-friendly output
@@ -93,7 +100,7 @@ function isValidUUID(str: string): boolean {
  */
 export const getTasks = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { query, date, user_id } = req.body as GetTasksRequest;
+    const { query, date, start_date, end_date, user_id } = req.body as GetTasksRequest;
 
     if (!user_id) {
       logger.warn("Voice tools: get_tasks called without user_id");
@@ -105,12 +112,16 @@ export const getTasks = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    logger.info("Voice tools: get_tasks called", { user_id, query, date });
+    logger.info("Voice tools: get_tasks called", { user_id, query, date, start_date, end_date });
 
     let tasks: Task[];
 
-    // If date is provided, filter by date range (single day)
-    if (date) {
+    // If date range is provided, filter by range
+    if (start_date && end_date) {
+      tasks = await TaskModel.findByUserIdAndDateRange(user_id, start_date, end_date);
+    }
+    // If single date is provided, filter by that date
+    else if (date) {
       tasks = await TaskModel.findByUserIdAndDateRange(user_id, date, date);
     } else {
       tasks = await TaskModel.findByUserId(user_id);
@@ -164,6 +175,8 @@ export const proposeAction = async (
       task_id,
       title,
       date,
+      tags,
+      recurrence,
       start_time,
       end_time,
       description,
@@ -206,6 +219,8 @@ export const proposeAction = async (
           end_time,
           description,
           priority,
+          tags,
+          recurrence,
         });
         break;
 
@@ -219,6 +234,8 @@ export const proposeAction = async (
           end_time,
           description,
           priority,
+          tags,
+          recurrence,
         });
         break;
 
@@ -261,9 +278,20 @@ async function handleCreateTask(params: {
   end_time?: string;
   description?: string;
   priority?: string;
+  tags?: string[];
+  recurrence?: any;
 }): Promise<ActionResponse> {
-  const { user_id, title, date, start_time, end_time, description, priority } =
-    params;
+  const {
+    user_id,
+    title,
+    date,
+    start_time,
+    end_time,
+    description,
+    priority,
+    tags: providedTags,
+    recurrence,
+  } = params;
 
   if (!title) {
     return {
@@ -273,9 +301,11 @@ async function handleCreateTask(params: {
   }
 
   // Build tags array with priority if provided
-  const tags: string[] = [];
+  const tags: string[] = providedTags || [];
   if (priority && ["low", "medium", "high"].includes(priority.toLowerCase())) {
-    tags.push(priority.toLowerCase());
+    if (!tags.includes(priority.toLowerCase())) {
+      tags.push(priority.toLowerCase());
+    }
   }
 
   const taskData = {
@@ -286,6 +316,7 @@ async function handleCreateTask(params: {
     start_time: start_time || undefined,
     end_time: end_time || undefined,
     tags,
+    recurrence: recurrence || { type: "none" },
   };
 
   const task = await TaskModel.create(taskData);
@@ -307,6 +338,8 @@ async function handleUpdateTask(params: {
   end_time?: string;
   description?: string;
   priority?: string;
+  tags?: string[];
+  recurrence?: any;
 }): Promise<ActionResponse> {
   const {
     user_id,
@@ -317,6 +350,8 @@ async function handleUpdateTask(params: {
     end_time,
     description,
     priority,
+    tags,
+    recurrence,
   } = params;
 
   if (!task_id) {
@@ -358,10 +393,12 @@ async function handleUpdateTask(params: {
   if (start_time !== undefined) updates.start_time = start_time;
   if (end_time !== undefined) updates.end_time = end_time;
   if (description !== undefined) updates.description = description;
+  if (tags !== undefined) updates.tags = tags;
+  if (recurrence !== undefined) updates.recurrence = recurrence;
 
   // Handle priority update in tags
   if (priority !== undefined) {
-    const existingTags = existingTask.tags || [];
+    const existingTags = updates.tags || existingTask.tags || [];
     const filteredTags = existingTags.filter(
       (tag: any) =>
         typeof tag !== "string" ||
